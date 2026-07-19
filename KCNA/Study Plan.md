@@ -29,9 +29,9 @@
 # 📅 Week 1 — 인풋 + 약점 집중
 
 ## D1 (평, 1h) — 섹션2 Cloud Native Architecture
-- [ ] 오토스케일링 4종 구분: HPA(Pod 수평) / VPA(리소스 조정) / Cluster Autoscaler(노드 수) / KEDA(이벤트 기반)
-- [ ] 클라우드 네이티브 원칙(복원력·확장성·자동화), 서버리스 개념
-- [ ] 섹션 퀴즈
+- [X] 오토스케일링 4종 구분: HPA(Pod 수평) / VPA(리소스 조정) / Cluster Autoscaler(노드 수) / KEDA(이벤트 기반)
+- [X] 클라우드 네이티브 원칙(복원력·확장성·자동화), 서버리스 개념
+- [X] 섹션 퀴즈
 
 ## D2 (평, 1h) — 섹션3 Containers (배속)
 - [ ] OCI / 컨테이너 런타임 / 이미지 계층 개념
