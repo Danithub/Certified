@@ -706,3 +706,472 @@ echo Spurin >> website/index.html    # 로컬 파일 수정 → 새로고침 시
 3. `docker exec`는 어떤 상태의 컨테이너에 무엇을 하는 명령인가?
 4. 웹 컨텐츠를 바꿀 때 컨테이너 내부를 직접 수정하면 안 되는 이유와 올바른 대안은?
 5. 볼륨 마운트 시 호스트 경로에 대한 제약(그리고 Windows 특이사항)은?
+
+---
+
+## 3-6. Building Container Images - Part 1 (컨테이너 이미지 빌드 ①)
+
+### 한 줄 요약
+C 소스코드(cmatrix)를 컨테이너 이미지로 빌드하는 실습. **경량 베이스 이미지(Alpine)** 를 고르고, `FROM`·`LABEL`로 시작하는 **Dockerfile**을 작성한 뒤, 곧바로 이미지를 완성하지 않고 **컨테이너 안(sh)에 직접 들어가 빌드 단계를 하나씩 시행착오로 파악**하는 전략을 쓴다. Alpine은 `apk`로 패키지를 관리하며, C 컴파일에는 여러 빌드 도구가 필요하다. `--rm` 컨테이너라 나가면 사라지므로, 파악한 단계는 **셸 히스토리로 저장**해 다음 파트의 Dockerfile로 옮긴다.
+
+---
+
+### 3-6-1. 실습 목표 & 베이스 이미지 Alpine
+
+- 목표: 매트릭스 화면보호기 **cmatrix(C 언어 소스)** 를 컨테이너 이미지로 빌드 → 이후 파트에서 **최적화(멀티 스테이지 빌드·크기 축소)** 하고 **레지스트리에 push**.
+- 베이스 이미지로 **Alpine** 선택.
+  - **Alpine Linux 기반**의 초소형·최소(minimal) 이미지, **10MB 미만**.
+  - 가벼운 대신 도구가 거의 없어 Ubuntu 등보다 **덜 관대(까다로움)** → 필요한 것을 직접 설치해야 함.
+
+```bash
+docker pull alpine
+docker images        # alpine 이미지가 매우 작음을 확인
+```
+
+> 🎯 포인트: 컨테이너 이미지는 **가능한 한 가볍게**가 원칙. 이미지 크기는 시스템 아키텍처(ARM vs AMD)나 시점에 따라 조금씩 다를 수 있음.
+
+---
+
+### 3-6-2. Dockerfile 작성 — FROM & LABEL
+
+- **Dockerfile** = 컨테이너 이미지를 조립하는 데 필요한 **명령·지시사항을 담은 텍스트 파일**.
+- **`FROM`** = 이후 지시사항의 **베이스 이미지** 지정 (여기서는 `alpine`).
+- 관리자 정보 표기:
+
+| 방식 | 설명 |
+| --- | --- |
+| `MAINTAINER` (구식) | 과거엔 관리자 이메일을 이 지시어로 표기 |
+| **`LABEL`** (권장) | 현재 **best practice**. 여러 개의 라벨을 자유롭게 추가 가능 |
+
+- `LABEL`은 **OCI(Open Containers) 표준 라벨 세트**를 따르는 것이 좋음 (예: author=작성자, description=설명).
+- 이 시점의 이미지는 커스텀 라벨만 추가돼 **크기는 alpine과 거의 동일**.
+
+---
+
+### 3-6-3. 이미지 빌드 & "컨테이너 안에서 단계 파악" 전략
+
+```bash
+docker build . -t spurin/cmatrix    # 현재 디렉터리(.)의 Dockerfile로 빌드, 태그 지정
+docker images                        # 방금 만든 이미지 확인
+```
+
+- `-t spurin/cmatrix`의 `spurin`은 **Docker Hub 사용자 ID** 자리. 가입했다면 자기 ID 사용.
+  - 미가입이면 아무 값이나 가능하지만, 뒤에서 **push 단계는 완료 불가** → 가입 권장.
+- ⭐ **핵심 전략**: 완성된 Dockerfile을 한 번에 쓰려 하지 말고, **먼저 컨테이너 환경 안으로 들어가** 실제로 이것저것 해보며 **빌드에 필요한 단계를 파악**한다. 실제 실행 환경의 정확한 관점에서 무엇이 되고 안 되는지 확인할 수 있음.
+
+---
+
+### 3-6-4. 컨테이너 진입 & Alpine의 패키지 관리자 apk
+
+```bash
+docker run --rm -i -t spurin/cmatrix sh   # alpine엔 bash가 없어 sh 사용
+hostname                                   # 컨테이너 환경임을 확인
+```
+
+- Alpine은 너무 가벼워 **bash가 없음** → 표준 셸 **`sh`** 사용.
+- 첫 장애물: **git이 설치돼 있지 않음**.
+- 배포판별 패키지 관리자 대비:
+
+| 계열 | 패키지 관리자 |
+| --- | --- |
+| Debian 계열 | `apt` |
+| CentOS/RHEL 계열 | `yum` / `dnf` |
+| **Alpine** | **`apk`** |
+
+```bash
+apk update        # 빌드 1단계
+apk add git       # 빌드 2단계: git 설치
+git clone <포크된 cmatrix 저장소>   # 빌드 3단계: 소스 코드 clone
+```
+
+> 강사는 일관성을 위해 cmatrix를 **fork** 해둠 → clone하면 동일 코드 확보.
+
+---
+
+### 3-6-5. C 소스 컴파일 — 시행착오로 채운 단계들
+
+C 애플리케이션 빌드는 보통 `autoreconf -i` → `./configure` → `make` 흐름. 각 단계에서 필요한 도구가 없어 하나씩 `apk add`로 채워나감 (실제로는 구글 검색 등 **트라이 앤 에러**의 연속).
+
+| 실행한 명령 | 발생한 문제 | 해결(설치 패키지) |
+| --- | --- | --- |
+| `autoreconf -i` | 명령 자체가 없음 | `apk add autoconf` |
+| `autoreconf -i` (재시도) | `aclocal` 없음 | `apk add automake` |
+| `./configure ...`(static) | 컴파일러(CC/GCC) 없음 | `apk add alpine-sdk` (기본 컴파일러 제공) |
+| `./configure` (재시도) | ncurses 없음 + 디렉터리 2개 없음 | ncurses 관련 패키지 추가 |
+| `./configure` (재시도) | 폰트 디렉터리 없음 경고 | 해당 디렉터리 직접 생성 |
+| `make` | (성공) | **cmatrix 바이너리 완성** |
+
+- `./configure`에 **static(정적) 빌드 옵션**을 줌 = 의존성을 바이너리에 포함(정적 컴파일). Go는 기본이 정적이나, C는 별도 문법이 필요.
+- 성공 판단: 마지막 명령의 **반환 코드 0**.
+
+---
+
+### 3-6-6. 꼭 기억할 포인트 — build vs runtime 패키지
+
+- `alpine-sdk`는 크기가 큰 패키지 → 설치 때마다 **이미지 크기 증가**에 주의(뒤 파트에서 최적화 대상).
+- ⭐ **`ncurses-terminfo-base`** 는 **빌드용이 아니라 실행(runtime)용** 패키지.
+  - 소프트웨어를 **컴파일**하는 데 쓰이는 게 아니라, ncurses 라이브러리가 **실행 시** 참조하는 것.
+  - 터미널 정보·이스케이프 코드 파일들의 **데이터베이스** → 매트릭스 화면보호기가 제대로 표시되려면 필요.
+  - 뒤 파트(멀티 스테이지 빌드)에서 **"빌드에만 필요한 것"과 "실행에도 필요한 것"** 을 구분할 때 이 패키지가 다시 등장.
+
+```bash
+make                 # 컴파일 → cmatrix 바이너리 생성
+./cmatrix            # 정상 동작 확인 (CTRL-C로 종료)
+```
+
+> 🎯 시험/실무 포인트: 이미지 최적화의 핵심은 **빌드 전용 도구는 최종 이미지에서 빼고, 실행에 필요한 것만 남기는 것**. (`ncurses-terminfo-base` = 실행에 필요)
+
+---
+
+### 3-6-7. --rm 컨테이너의 휘발성 & 셸 히스토리 저장
+
+- 이 컨테이너는 **`--rm`** 으로 실행 → **exit하면 모든 작업 맥락(설치·빌드 결과)이 사라짐**.
+- 그래서 파악한 단계들을 **셸 히스토리로 로컬에 저장**해 다음 파트의 Dockerfile로 옮김.
+- `exit` 후 확인하면 컨테이너가 **제거·정리(clean up)** 됨.
+
+> 🎯 흐름 정리: **컨테이너 안에서 단계 파악 → 히스토리 저장 → (Part 2) Dockerfile로 이식**.
+
+---
+
+### 🎯 3-6 시험 대비 핵심 암기 체크
+- [ ] Dockerfile = 이미지 조립용 명령·지시사항을 담은 **텍스트 파일**
+- [ ] `FROM` = 베이스 이미지 지정, 여기선 **alpine** (Alpine Linux 기반, 10MB 미만, minimal)
+- [ ] 관리자 표기는 `MAINTAINER`(구식) 대신 **`LABEL`(권장, OCI 표준)** 사용, 라벨은 여러 개 가능
+- [ ] `docker build . -t 사용자/이미지` → `.`은 현재 디렉터리(Dockerfile 위치)
+- [ ] 빌드 전략: **컨테이너 안에 직접 들어가 단계를 시행착오로 파악** 후 Dockerfile로 이식
+- [ ] Alpine 패키지 관리자 = **`apk`** (Debian=apt, RHEL=yum/dnf 대비)
+- [ ] C 빌드 흐름: `autoreconf -i` → `./configure` → `make`
+- [ ] 필요 패키지: git, autoconf, automake, **alpine-sdk(컴파일러)**, ncurses 계열
+- [ ] `./configure`의 **static 옵션** = 의존성을 바이너리에 포함(정적 컴파일)
+- [ ] **`ncurses-terminfo-base` = 빌드용이 아니라 실행(runtime)용** ← 최적화 시 구분 포인트
+- [ ] 명령 성공 = **반환 코드 0**
+- [ ] `--rm` 컨테이너는 exit 시 맥락 소멸 → **셸 히스토리 저장**으로 단계 보존
+
+---
+
+### 🧪 셀프 체크 (틀리면 오답노트로)
+1. 완성된 Dockerfile을 바로 쓰지 않고 컨테이너 안에서 단계를 파악하는 전략의 장점은?
+2. Alpine에서 패키지를 설치하는 명령은? (Debian/RHEL 계열과 비교)
+3. C 소스 빌드의 대표 3단계와 각 단계에서 필요했던 도구를 말하시오.
+4. `ncurses-terminfo-base`가 다른 빌드 패키지와 성격이 다른 이유는?
+5. `--rm`으로 실행한 컨테이너에서 작업 내용을 잃지 않으려면 무엇을 했는가?
+
+---
+
+## 3-6. Building Container Images - Part 2 (컨테이너 이미지 빌드 ②)
+
+### 한 줄 요약
+Part 1에서 파악한 빌드 단계를 Dockerfile로 옮겨 완성한 뒤, **점진적으로 최적화**한다. `cd`는 RUN 사이에 유지되지 않으므로 **`WORKDIR`** 을 쓰고, 여러 `apk add`와 `LABEL`·`RUN` 문을 **하나로 병합**해 레이어를 줄인다. 결정적 최적화는 **멀티 스테이지 빌드**로, 빌드 도구는 빌드 스테이지에만 두고 최종 이미지에는 **`COPY --from`** 으로 바이너리만 가져온다. 실행에 필요한 **`ncurses-terminfo-base`** 는 런타임 이미지에도 넣어야 하며, **비root 사용자(`adduser` + `USER`)** 로 실행하는 것이 권장된다. 마지막으로 **`CMD` → `ENTRYPOINT`** 전환으로 컨테이너를 실행 파일처럼 다룬다.
+
+---
+
+### 3-6-8. 히스토리 → Dockerfile 이식 & 실패 단계 정리
+
+- Part 1에서 셸 히스토리로 저장한 단계들을 Dockerfile에 붙여넣고 **줄 번호를 제거**해 정리.
+- 실험·실패했던 명령들은 **주석 처리(`#`, hash out)** 해서 학습 기록으로 남김. 주석 처리 대상:
+
+| 주석 처리한 명령 | 이유 |
+| --- | --- |
+| `hostname` | 단순 확인용, 빌드에 불필요 |
+| 첫 `git clone` | git 설치 전이라 실패했던 시도 |
+| `ls`, `ls -l` | 둘러보기·바이너리 확인용 |
+| 실패한 `autoreconf` | autoconf/automake 설치 전 시도 |
+| `echo $?` | 반환 코드 확인용 |
+| 실패한 `./configure` | SDK·ncurses 설치 전 시도 |
+| `history` | 마지막 히스토리 출력 명령 |
+
+- 남은 유효한 단계마다 **`RUN` 지시어**를 붙여 이미지 빌드 시 실행되게 함 → 각 단계가 하나의 **레이어**가 됨.
+- 완성된 cmatrix 바이너리 실행은 **`CMD`** 로 지정. 형식은 여러 가지지만 **대괄호 표기법(exec form)** 사용 → 컨테이너 실행 시 그 바이너리를 실행.
+
+---
+
+### 3-6-9. 첫 실패 — cd는 유지되지 않는다 → WORKDIR
+
+- 빌드하면 **8번째 단계에서 실패**. 원인: 이전 실습에서 `cd cmatrix`로 디렉터리를 옮겼는데,
+  - ⭐ **디렉터리 변경(`cd`)은 각 `RUN` 명령 사이에서 유지되지 않는다(persist X).**
+  - 다른 RUN들은 전부 루트 디렉터리에서 실행되어, cmatrix 소스 디렉터리 안에서 돌아야 할 명령이 실패.
+- 해결: `RUN cd cmatrix` 대신 **`WORKDIR`** 지시어 사용.
+  - `WORKDIR`은 디렉터리가 **없으면 생성**하고 **해당 디렉터리로 이동**한다.
+- 추가 수정: `git clone`은 원래 저장소명 디렉터리를 새로 만듦 → **끝에 `.`(점)을 추가**해 **현재 디렉터리(=WORKDIR의 cmatrix)** 로 clone하도록 변경.
+
+```dockerfile
+WORKDIR /cmatrix
+RUN git clone <cmatrix 저장소> .   # 끝의 . = 현재 디렉터리로 clone
+```
+
+- 저장 후 재빌드 → **성공**. `docker images`로 새 이미지 확인, 실행도 정상.
+
+> 🎯 시험 포인트: **`cd`는 RUN 간 유지 안 됨 → 작업 디렉터리는 `WORKDIR`로 지정**. `WORKDIR`는 없으면 생성 + 이동.
+
+---
+
+### 3-6-10. 최적화 ① 레이어 줄이기 — 명령 병합
+
+동작은 하지만 이미지가 **거대하고 레이어가 과도**함 (모범 사례 미적용). 쉬운 것부터 개선.
+
+**quick win: 주석 제거 + `apk add` 통합**
+- 더 이상 필요 없는 주석 라인 제거.
+- 여러 번 나눠 실행하던 `apk add`를 **하나의 명령**으로 통합 (git 설치 라인에 나머지 패키지를 함께 나열).
+- 결과: 레이어가 **9개**로 감소.
+
+**LABEL·RUN 문 병합 (`\` 와 `&&`)**
+- **`LABEL`**: 두 번째 라벨의 `LABEL` 접두사를 제거하고 첫 줄 끝에 **`\`(백슬래시)** 를 붙여 **여러 줄 문(multi-line)** 으로 → LABEL을 **한 번만** 실행하며 두 라벨을 함께 전달.
+- **`RUN`**: 첫 항목만 `RUN`을 남기고 나머지 접두사 제거. 명령들을 **논리 AND(`&&`)** 로 잇고 각 줄 끝에 **`\`** 를 붙여 하나의 실행으로 합침.
+  - 마지막 `make`에는 `&&`·`\`를 붙이지 않음 (최종 명령이므로).
+- 결과: 레이어가 **3개**로 감소. 실행도 여전히 정상.
+
+```dockerfile
+LABEL author="..." \
+      description="..."
+
+RUN apk update && \
+    apk add git autoconf automake alpine-sdk ncurses-dev ncurses-static && \
+    git clone <repo> . && \
+    autoreconf -i && \
+    ./configure <static opts> && \
+    make
+```
+
+> 🎯 시험 포인트: **한 `RUN`에 `&&`+`\`로 명령을 묶으면 레이어 수가 줄어든다.** LABEL도 `\`로 한 번에 여러 개 지정 가능.
+
+---
+
+### 3-6-11. 최적화 ② 멀티 스테이지 빌드 (Multi-stage Build)
+
+- 레이어를 줄여도 이미지는 **여전히 거대**. 바이너리를 만드는 데 필요한 **모든 빌드 도구가 최종 이미지에 포함**되기 때문.
+- (참고) `docker images --digests` → 로컬 빌드 이미지는 **이미지 ID는 있지만 digest는 아직 없음**(레지스트리에 push 전이라).
+- ⭐ 해결책: **멀티 스테이지 빌드** — 필요한 컴포넌트를 **빌드 스테이지**에서 만든 뒤, **가장 중요한 부분(바이너리)만** 최종 이미지로 가져온다.
+
+**구조: 두 개의 FROM**
+
+```dockerfile
+# 1) build container image
+FROM alpine AS cmatrixbuilder      # 빌드 스테이지에 식별자(as) 부여
+WORKDIR /cmatrix
+RUN apk update && apk add ... && git clone ... . && autoreconf -i && ./configure ... && make
+
+# 2) cmatrix container image (최종)
+FROM alpine
+LABEL author="..." description="..."
+COPY --from=cmatrixbuilder /cmatrix /cmatrix   # 빌드 스테이지에서 바이너리만 복사
+```
+
+- 첫 `FROM`에 **`AS cmatrixbuilder`** 식별자를 부여 → alpine 설정·WORKDIR·빌드 도구 설치·`make`까지 수행하는 **빌드 스테이지**.
+- 최종 스테이지는 `FROM alpine` + 라벨만 있고 바이너리는 없음 → **`COPY --from=cmatrixbuilder`** 로 빌드 스테이지의 `/cmatrix`를 최종 이미지 `/cmatrix`로 복사.
+- 결과: 이미지가 **매우 작아짐** (docker가 레이어를 캐시해 재빌드도 빠름).
+
+> 🎯 시험 포인트: **멀티 스테이지 빌드 = 빌드 도구는 빌드 스테이지에만, 최종 이미지엔 `COPY --from`으로 산출물만.** `FROM ... AS <이름>`으로 스테이지에 이름을 붙인다.
+
+---
+
+### 3-6-12. 런타임 의존성 — ncurses-terminfo-base & --no-cache
+
+- 최종 이미지를 실행하면 오류: **`Error opening terminal: xterm`**.
+- 원인: Part 1에서 예고한 **`ncurses-terminfo-base`** 는 **실행(runtime)에 필요한** 패키지인데, 빌드 스테이지에는 있지만 **최종 실행 이미지에는 없어서** 발생.
+- 해결: 최종 이미지에도 설치 단계 추가.
+
+```dockerfile
+RUN apk update && apk add --no-cache ncurses-terminfo-base
+```
+
+- **`--no-cache`** 옵션: apk가 패키지 인덱스 정보를 **캐시하지 않음** → 이미지에 불필요한 캐시가 남지 않아 더 작아짐.
+- 일관성을 위해 **빌드 스테이지와 최종 스테이지 양쪽 모두**에 `--no-cache` 적용.
+- 재빌드 후 실행 → **정상 동작**. 이미지는 조금 커졌지만 여전히 매우 작고 가벼움.
+
+> 🎯 시험 포인트: **빌드에만 필요한 것 / 실행에도 필요한 것**을 구분하는 것이 이미지 최적화의 핵심. `ncurses-terminfo-base`는 **런타임 필수**. `apk add --no-cache` = 캐시 미저장으로 이미지 축소.
+
+---
+
+### 3-6-13. 비특권 사용자로 실행 — adduser & USER
+
+- 현재 컨테이너는 **root로 실행** 중. 명령을 `whoami`로 재정의해 실행하면 `root` 출력으로 확인 가능.
+- ⭐ 권한이 축소된 **비root 사용자**를 만들어 프로세스를 그 사용자로 실행하는 것이 권장 관행.
+- Alpine 주의점: **`useradd`가 아니라 `adduser`** 사용 (Alpine 특유의 명령·구문 차이).
+
+```dockerfile
+RUN adduser -g "Thomas Anderson" -s /sbin/nologin -D -H thomas
+USER thomas
+```
+
+| 옵션 | 의미 |
+| --- | --- |
+| `-g` | 사용자 이름/정보 (GECOS) — 여기선 매트릭스의 Thomas Anderson |
+| `-s /sbin/nologin` | 셸 지정. 로그인 불필요 → **nologin** |
+| `-D` | 비밀번호 없이 생성 (disable password) |
+| `-H` | 홈 디렉터리 **생성 안 함** → 이미지 크기 증가 방지 |
+| `USER thomas` | 이후 프로세스를 **thomas** 사용자로 실행 |
+
+- 재빌드 후 `whoami` → 이제 **`thomas`** 로 실행됨을 확인.
+
+> 🎯 시험 포인트: **Alpine은 `adduser`**(데비안 계열 `useradd`와 구문 다름). `USER` 지시어로 컨테이너를 **non-root**로 실행 = 보안 권장.
+
+---
+
+### 3-6-14. CMD vs ENTRYPOINT — 컨테이너를 실행 파일처럼
+
+**cmatrix 옵션 맛보기**
+
+| 옵션 | 효과 |
+| --- | --- |
+| `--help` | 전체 옵션 목록 |
+| `-b` | 볼드(bold) 효과 |
+| `-k` | 스크롤 중 문자가 계속 바뀜 |
+| `-r` | 무지개(rainbow) 모드 |
+| `-a` | 비동기 스크롤(asynchronous) — 줄마다 속도 다름 |
+| `-u <n>` | 스크롤 지연(속도). 기본값 **4**, 값이 작을수록 빠름(예: 2) |
+| `-C <색>` | 색상 지정 (예: `-C magenta`) |
+
+- 옵션들은 조합 가능 (예: `-k -b -r`).
+
+**CMD → ENTRYPOINT 전환**
+- **`CMD`**: 컨테이너 실행 시 **기본 명령**을 제공. 현재는 매개변수 없는 명령 단독이라 **한 가지 방식만** 가능.
+- **`ENTRYPOINT`**: 컨테이너를 **실행 파일(executable)처럼** 다룰 때 유용. 명령줄 오버라이드가 **entrypoint의 매개변수**가 됨.
+
+```dockerfile
+ENTRYPOINT ["cmatrix"]
+CMD ["-b"]                 # 기본 파라미터(bold). 오버라이드 시 이 자리만 대체
+```
+
+- 이렇게 하면 기본은 볼드 모드로 실행되고, `docker run ... --help`처럼 주면 그 인자가 **cmatrix의 파라미터**로 전달됨.
+
+```bash
+docker run ... --help          # cmatrix --help 로 동작
+docker run ... -a -b -u 2 -C magenta   # 비동기+볼드+속도2+마젠타
+```
+
+> 🎯 시험 포인트: **`CMD` = 기본 명령/인자(오버라이드하면 통째로 교체)** / **`ENTRYPOINT` = 고정 실행 파일(오버라이드는 인자로 전달)**. 둘을 함께 쓰면 ENTRYPOINT=실행 파일, CMD=기본 인자.
+
+---
+
+### 🎯 3-6 Part 2 시험 대비 핵심 암기 체크
+- [ ] `cd`(디렉터리 이동)는 **`RUN` 명령 사이에 유지되지 않음** → **`WORKDIR`** 사용
+- [ ] `WORKDIR` = 디렉터리 없으면 **생성 + 이동**
+- [ ] `git clone <repo> .` 의 끝 **`.`** = 현재 디렉터리로 clone
+- [ ] `RUN`을 **`&&` + `\`** 로 묶으면 레이어 수 감소 / `LABEL`도 `\`로 한 번에 여러 개
+- [ ] Dockerfile 단계 각각이 하나의 **레이어**, `apk add`는 하나로 통합하는 게 좋음
+- [ ] **멀티 스테이지 빌드**: `FROM alpine AS <이름>`(빌드) + 최종 `FROM alpine`
+- [ ] 최종 이미지엔 **`COPY --from=<빌드스테이지>`** 로 산출물(바이너리)만 복사
+- [ ] `ncurses-terminfo-base`는 **런타임 필수** → 최종 이미지에도 설치해야 함(미설치 시 `Error opening terminal: xterm`)
+- [ ] `apk add --no-cache` = 캐시 미저장으로 이미지 축소
+- [ ] `docker images --digests`: push 전 로컬 이미지는 **이미지 ID는 있고 digest는 없음**
+- [ ] Alpine은 **`adduser`**(데비안 `useradd`와 구문 다름), `USER`로 **non-root** 실행
+- [ ] adduser 옵션: `-g`(정보) / `-s /sbin/nologin`(셸) / `-D`(무비번) / `-H`(홈 미생성)
+- [ ] **`CMD`** = 기본 명령/인자(오버라이드 시 통째 교체) / **`ENTRYPOINT`** = 고정 실행 파일(오버라이드는 인자로 전달)
+- [ ] `ENTRYPOINT + CMD` 조합 = 실행 파일 고정 + 기본 인자 제공
+
+---
+
+### 🧪 3-6 Part 2 셀프 체크 (틀리면 오답노트로)
+1. `RUN cd cmatrix`가 다음 단계에 영향을 주지 못하는 이유와 올바른 대안은?
+2. Dockerfile 레이어 수를 줄이는 두 가지 기법(`RUN`·`LABEL`)을 설명하시오.
+3. 멀티 스테이지 빌드가 이미지 크기를 줄이는 원리와 `COPY --from`의 역할은?
+4. 최종 이미지 실행 시 `Error opening terminal: xterm`이 뜬 원인과 해결책은?
+5. `CMD`와 `ENTRYPOINT`의 차이를, 오버라이드 동작 관점에서 설명하시오.
+
+---
+
+## 3-6. Building Container Images - Part 3 (컨테이너 이미지 빌드 ③ · 최종장)
+
+### 한 줄 요약
+완성한 이미지를 **여러 CPU 아키텍처(AMD64 · ARM64)** 에서 동작하도록 **`docker buildx`** 로 멀티 아키텍처 빌드하고, 곧바로 **Docker Hub 레지스트리에 push**한다. buildx는 두 아키텍처를 **병렬로 빌드**하며, 다른 아키텍처는 **에뮬레이션**으로 빌드된다. push 후에는 로컬 이미지를 지워도 실행 시 **자동 pull**된다. 마지막으로 빌드 과정에서 쌓인 낭비 리소스는 **`docker system prune`** 으로 정리한다.
+
+---
+
+### 3-6-15. 왜 멀티 아키텍처인가 & buildx
+
+- 전 세계 많은 사람이 쓸 이미지라면, **서로 다른 플랫폼에서 동작하는지** 확인하는 것이 마지막 단계.
+
+| 아키텍처 | 대상 |
+| --- | --- |
+| **AMD64** | Intel · AMD CPU |
+| **ARM64** | Apple Silicon(Mac), Raspberry Pi 4 등 |
+
+- 기존 `docker build` 대신 **`docker buildx`** 기능 사용 → 하나의 빌드로 **여러 아키텍처 이미지**를 만들고 레지스트리에 push 가능.
+- push 대상 레지스트리로 **Docker Hub** 사용 → 미리 **로그인** 필요.
+
+```bash
+docker login        # Docker Hub 로그인 (사용자 ID 확인, 예: spurin)
+```
+
+---
+
+### 3-6-16. buildx 설정 & 멀티 아키텍처 빌드 + push
+
+```bash
+# 1) buildx 빌더(config) 생성·사용
+docker buildx use buildx-multi-arch
+
+# 2) 멀티 아키텍처 빌드 후 바로 push
+docker buildx build --no-cache \
+  --platform linux/amd64,linux/arm64/v8 \
+  -t spurin/cmatrix \
+  --push .
+```
+
+| 요소 | 의미 |
+| --- | --- |
+| `docker buildx use <빌더>` | 사용할 buildx 빌더(config) 지정 |
+| `--no-cache` | 캐시 없이 새로 빌드 |
+| `--platform linux/amd64,linux/arm64/v8` | 빌드할 **대상 아키텍처 목록** |
+| `-t spurin/cmatrix` | 이미지 태그 (Docker Hub 사용자 ID/이미지명) |
+| `--push` | 빌드 결과를 **Docker Hub 레지스트리에 push** |
+| `.` | 빌드 컨텍스트 = 현재 디렉터리 |
+
+- 빌드 시 **amd64와 arm64가 병렬(parallel)로 동시 진행**됨.
+- ⭐ 호스트와 다른 아키텍처는 **에뮬레이션(emulation)** 으로 빌드됨.
+  - 예: Apple Silicon(arm64) 호스트에서는 **arm64가 먼저** 끝나고, amd64는 에뮬레이션이라 뒤에 완료.
+- 완료되면 자동으로 Docker Hub에 push → **AMD/ARM 무관하게 누구나 이 이미지 사용 가능**.
+
+> 🎯 시험/실무 포인트: **멀티 아키텍처 이미지 = `docker buildx build --platform <목록> --push`**. 다른 아키텍처는 에뮬레이션으로 빌드된다.
+
+---
+
+### 3-6-17. push 검증 — 로컬 삭제 후 자동 pull
+
+```bash
+docker rmi spurin/cmatrix    # 로컬 이미지 제거 (remove image)
+docker images                # 목록에서 사라졌는지 확인
+docker run ... -C magenta    # 다시 실행 → 로컬에 없으니 레지스트리에서 자동 pull 후 실행
+```
+
+- 로컬에서 이미지를 지워도, 실행 명령을 다시 내리면 **레지스트리에서 자동으로 pull**해 정상 실행됨 → push가 제대로 됐다는 증거.
+- 여기까지 왔다면 첫 컨테이너 빌드/첫 push 완료. 실행 명령을 공유해 다른 사람도 써 볼 수 있음.
+
+---
+
+### 3-6-18. 정리 — docker system prune
+
+- 이미지를 계속 바꾸며 빌드하는 과정에서 **낭비 리소스(dangling 이미지·중간 산출물 등)** 가 많이 쌓임.
+- Docker는 **타당한 이유로 이를 자동 삭제하지 않음** (그 안에 필요한 것이 남아 있을 수 있으므로 보수적으로 보존).
+- 더 이상 필요 없으면 **`docker system prune`** 으로 일괄 정리.
+
+```bash
+docker system prune    # 사용하지 않는 이미지/컨테이너/네트워크 등 제거
+```
+
+> ⚠️ 주의: 실행 시 나오는 **경고(warning)를 반드시 확인**할 것. 필요한 리소스까지 지울 수 있으므로, 무엇이 삭제되는지 파악하고 사용.
+
+> 🎯 포인트: **Docker는 낭비 리소스를 자동 삭제하지 않음** → 정리는 `docker system prune`로 명시적으로 수행.
+
+---
+
+### 🎯 3-6 Part 3 시험 대비 핵심 암기 체크
+- [ ] 멀티 아키텍처 대상: **AMD64**(Intel/AMD) / **ARM64**(Apple Silicon, Raspberry Pi 4 등)
+- [ ] 멀티 아키텍처 빌드는 `docker build`가 아니라 **`docker buildx`** 사용
+- [ ] `docker buildx use <빌더>`로 빌더(config) 지정 후 빌드
+- [ ] `docker buildx build --platform linux/amd64,linux/arm64/v8 -t <img> --push .`
+- [ ] `--push` = 빌드 결과를 **레지스트리(Docker Hub)에 바로 push**
+- [ ] 여러 아키텍처는 **병렬 빌드**, 호스트와 다른 아키텍처는 **에뮬레이션**으로 빌드
+- [ ] push 전 **`docker login`** 필요 (Docker Hub 사용자 ID/이미지명으로 태그)
+- [ ] `docker rmi <img>` = 로컬 이미지 제거 → 재실행 시 **자동 pull**
+- [ ] Docker는 낭비 리소스를 **자동 삭제하지 않음**(보수적 보존)
+- [ ] **`docker system prune`** = 미사용 리소스 일괄 정리 (경고 확인 필수)
+
+---
+
+### 🧪 3-6 Part 3 셀프 체크 (틀리면 오답노트로)
+1. 멀티 아키텍처 이미지를 만들 때 `docker build` 대신 무엇을 쓰며, 대표 대상 아키텍처 2가지는?
+2. `docker buildx build`에서 `--platform`과 `--push`는 각각 무엇을 하는가?
+3. Apple Silicon 호스트에서 amd64 이미지는 어떻게 빌드되는가?
+4. 로컬 이미지를 지웠는데도 실행이 되는 이유는?
+5. Docker가 낭비 리소스를 자동으로 지우지 않는 이유와, 정리에 쓰는 명령은?

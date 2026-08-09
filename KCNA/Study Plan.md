@@ -57,14 +57,14 @@
 # 📌 Phase 1 — 남은 인풋 마무리 (8/5 → 8/9)
 
 ## 8/5 (수, 평일) — 섹션3 후반 ①
-- [ ] 45 Building Container Images Part 1 정리
-- [ ] 46 Building Container Images Part 2 정리
-- [ ] CKAD 배경이라 빠르게, 낯선 부분만 상세히
+- [x] 45 Building Container Images Part 1 정리
+- [x] 46 Building Container Images Part 2 정리
+- [x] CKAD 배경이라 빠르게, 낯선 부분만 상세히
 
 ## 8/6 (목, 평일) — 섹션3 마무리
-- [ ] 47 Building Container Images Part 3 정리
-- [ ] Optional Challenge/Solution 훑기
-- [ ] 섹션3 퀴즈 → 틀린 것 오답노트 → 섹션3 완료 ✅
+- [x] 47 Building Container Images Part 3 정리
+- [x] Optional Challenge/Solution 훑기
+- [x] 섹션3 퀴즈 → 틀린 것 오답노트 → 섹션3 완료 ✅
 
 ## 8/7 (금, 평일) — 섹션4 Fundamentals (강점: 자가검증)
 - [ ] 섹션4 배속 시청(아는 부분 스킵)
