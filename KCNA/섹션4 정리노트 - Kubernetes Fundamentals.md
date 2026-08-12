@@ -30,6 +30,24 @@
   - 4-2-12. Cloud-Controller-Manager
   - 4-2-13. 고가용성(HA) 구성과 Raft
   - 4-2-14. 컴포넌트 배치 요약표
+- 4-3. Kubernetes Pods - Part 1 (쿠버네티스 파드 - 1부)
+  - 4-3-1. Pod란 무엇인가 — 컴퓨트의 최소 배포 단위
+  - 4-3-2. Pod 내부의 네트워킹과 통신 (localhost · 고유 IP · IPC)
+  - 4-3-3. 단일 컨테이너 Pod 실행하기 (kubectl run)
+  - 4-3-4. Pod 로그와 상세 정보 보기 (logs · get pods -o wide)
+  - 4-3-5. Pod IP 접근성 — 어디서 접근 가능한가
+  - 4-3-6. kubectl port-forward — 로컬에서 서비스 접근
+  - 4-3-7. 다른 Pod에서 접근하기 (curl 파드)
+  - 4-3-8. 실행 중인 Pod에 명령 실행 (kubectl exec · ubuntu 파드)
+  - 4-3-9. Pod 정리 (kubectl delete --now)
+  - 4-3-10. 명령어 요약표
+- 4-4. Kubernetes Pods - Part 2 (YAML로 파드 만들기)
+  - 4-4-1. YAML이란 & kubectl로 YAML 빠르게 생성하기 (--dry-run)
+  - 4-4-2. restartPolicy와 kubectl explain
+  - 4-4-3. create vs apply (명령형 vs 선언형)
+  - 4-4-4. 하나의 YAML에 여러 선언 담기 (--- 구분자)
+  - 4-4-5. 파일로 적용·삭제 (-f 옵션)
+  - 4-4-6. 명령어 요약표
 - 🎯 시험 대비 핵심 암기 체크
 - 🧪 셀프 체크
 
@@ -352,7 +370,309 @@ Kubernetes는 **Control Plane(주요 컴포넌트 실행)** 과 **Node(워크로
 
 > 🎯 암기 팁: **Static Pod 4형제 = etcd · apiserver · scheduler · controller-manager**(+옵션 CCM). **kube-proxy=DaemonSet**, **CoreDNS=Deployment**, **kubelet=양쪽 공통**.
 
+## 4-3. Kubernetes Pods - Part 1 (쿠버네티스 파드 - 1부)
+
+### 한 줄 요약
+**Pod = Kubernetes에서 배포 가능한 최소 컴퓨트 단위**이자 **하나 이상의 컨테이너 그룹**이다. 같은 파드 안 컨테이너들은 **네트워킹을 공유**하며 **localhost**로 통신하고, 각 파드는 클러스터 내 **고유 IP**를 가진다. 파드 간에는 별도 NAT 없이 **IP만으로 상호 통신**이 가능하며, `kubectl run/logs/get/port-forward/exec/delete` 로 파드를 다룬다.
+
 ---
+
+### 4-3-1. Pod란 무엇인가 — 컴퓨트의 최소 배포 단위
+
+- **Pod = Kubernetes에서 배포 가능한 가장 작은 컴퓨트 단위(smallest deployable unit).**
+- 본질적으로 **하나 이상(one or more)의 컨테이너 그룹**.
+- 파드는 애플리케이션과 그 **의존성 · 공유 스토리지 · 네트워킹**을 **하나의 배포 단위**로 캡슐화할 수 있다.
+- 따라서 파드 하나에 **애플리케이션 전체**를 담아 실행하는 것도 가능하다.
+
+> 🎯 시험 포인트: **Pod = 배포 가능한 최소 단위 = 1개 이상 컨테이너의 묶음.** 애플리케이션 + 의존성 + 스토리지 + 네트워킹을 하나로 캡슐화.
+
+---
+
+### 4-3-2. Pod 내부의 네트워킹과 통신 (localhost · 고유 IP · IPC)
+
+- **네트워킹 공유**: 같은 파드 안의 컨테이너들은 파드가 제공하는 **네트워킹을 공유**한다.
+- **localhost 통신**: 파드 내부 컨테이너끼리는 **localhost**로 서로 통신한다.
+- **고유 IP**: 각 파드는 클러스터 내에서 **자신만의 고유 IP 주소**를 할당받는다.
+- **IPC 통신**: 파드 내 컨테이너들은 **IPC(Inter Process Communication, 프로세스 간 통신)** 로도 통신 가능.
+
+> 🎯 시험 포인트: 파드 **내부** 컨테이너 통신 = **localhost + IPC**(네트워킹 공유). 파드마다 **고유 IP** 1개.
+
+---
+
+### 4-3-3. 단일 컨테이너 Pod 실행하기 (kubectl run)
+
+- 예시: **nginx 웹 서버** 컨테이너 하나로 간단한 파드를 실행.
+- 실행 명령:
+
+```bash
+kubectl run nginx --image=nginx
+```
+
+- `run` = 파드 실행 파라미터, `nginx` = **파드 이름**, `--image=nginx` = 공식 **nginx 컨테이너 이미지** 사용.
+- 실행 후 파드 목록 확인:
+
+```bash
+kubectl get pods
+```
+
+> 🎯 포인트: `kubectl run <파드이름> --image=<이미지>` → 단일 컨테이너 파드가 뜬다.
+
+---
+
+### 4-3-4. Pod 로그와 상세 정보 보기 (logs · get pods -o wide)
+
+- `get pods`만으로는 파드 정보나 기동 과정 가시성이 부족 → **로그**로 확인.
+
+```bash
+kubectl logs nginx        # 파드 이름이 nginx인 파드의 로그
+```
+
+- 강사 팁: 평소엔 `name/component` 형태(예: `pod/nginx`)를 표준으로 쓰지만,
+  **파드는 Kubernetes의 기본 개체**라 그냥 `kubectl logs nginx`로도 조회 가능.
+- 더 자세한 정보는 `-o wide` 옵션으로:
+
+```bash
+kubectl get pods -o wide  # 파드의 IP 주소, 실행 중인 노드 등 추가 정보 표시
+```
+
+> 🎯 포인트: `kubectl logs <파드>` = 로그 확인 / `kubectl get pods -o wide` = **IP·노드** 등 상세 정보.
+
+### 4-3-5. Pod IP 접근성 — 어디서 접근 가능한가
+
+- 파드 IP에 접근 가능한지는 **어떻게, 어디서** Kubernetes와 kubectl을 실행하는지에 따라 달라진다.
+  - kubectl을 **Kubernetes 인프라(클러스터 노드) 위에서** 직접 실행하는가?
+  - 아니면 **데스크톱 등 외부**에서 실행하는가?
+- 강의 예시: kubectl을 **클러스터 인프라 위에서** 직접 실행 → 시스템이 클러스터의 일부이므로 **파드 IP로 ping 가능**.
+- **파드 IP는 클러스터 내 어느 노드에서든 접근 가능** → 다른 노드로 `ssh` 후 그 노드에서 `ping` 해도 동작.
+- 랩 환경에는 편의용 **리버스 프록시**가 있어, 특정 Kubernetes 인스턴스(Control Plane / Worker1 / Worker2) 시점에서 웹 서비스에 접속해볼 수 있다.
+
+> 🎯 시험 포인트: **파드 IP는 클러스터 내부(모든 노드)에서 접근 가능.** 외부(데스크톱)에서의 접근 가능 여부는 실행 위치·환경에 따라 다르다.
+
+---
+
+### 4-3-6. kubectl port-forward — 로컬에서 서비스 접근
+
+- 클러스터가 어디에 있든(로컬·클라우드) **kubectl로 네트워크 서비스에 접근**하는 강력한 방법.
+- 도움말 예시가 유용:
+
+```bash
+kubectl port-forward --help
+kubectl port-forward nginx 8080:80   # 로컬 8080 → 파드의 80 포트로 터널
+```
+
+- kubectl을 실행 중인 시스템의 **8080 포트**에서 리슨 → 파드의 **80 포트**로 **포트 포워딩 터널** 생성.
+- 리슨 IP가 `127.0.0.1`(localhost)로 표시됨 → 로컬 머신이라면 브라우저로
+  `localhost:8080` 또는 `127.0.0.1:8080` 접속 시 **nginx 환영 페이지** 확인 가능.
+- 종료: `Ctrl-C`로 터널을 닫는다.
+
+> 🎯 시험 포인트: **port-forward = 로컬 포트를 파드 포트로 터널링**. 클러스터 위치와 무관하게 로컬에서 서비스에 접근하는 표준 기법.
+
+### 4-3-7. 다른 Pod에서 접근하기 (curl 파드)
+
+- 실행 중인 파드를 **다른 파드**에서 조회하는 방법. `curl`이 담긴 이미지를 활용.
+- `curl` = 명령줄에서 웹사이트와 상호작용하는 CLI 도구. 편리한 `curlimages/curl` 이미지 사용.
+
+```bash
+kubectl run -it --rm curl \
+  --image=curlimages/curl \
+  --restart=Never \
+  -- curl <nginx 파드 IP>
+```
+
+- 옵션 의미:
+  - `-it` = 인터랙티브, `--rm` = 종료 후 **자동 정리(clean up)**.
+  - `curl` = 파드 이름, `--image=curlimages/curl` = 사용할 이미지.
+  - `--restart=Never` = 실패해도 재시작하지 않음.
+  - `--` = **파라미터 구분자**, 뒤에 오는 것은 컨테이너에 전달할 명령/인자.
+  - 이 이미지의 기본 명령이 `curl`이므로, 인자로 **조회할 nginx 파드 IP**를 전달.
+- 결과: **nginx 환영 페이지 HTML**이 출력됨.
+- **핵심**: 서로 독립된 **두 파드가 통신**했다는 점. 두 파드가 **어느 노드에 있든**,
+  **NAT 같은 복잡한 네트워크 설정 없이 파드 IP만으로 통신**할 수 있다.
+- `--rm` 덕분에 종료 후 curl 파드는 자동 삭제되어 목록엔 다시 nginx만 남는다.
+
+> 🎯 시험 포인트: **파드 간 통신 = 파드 IP로 직접, NAT 불필요.** `--rm`은 종료 시 파드 자동 정리, `--restart=Never`는 재시작 안 함.
+
+### 4-3-8. 실행 중인 Pod에 명령 실행 (kubectl exec · ubuntu 파드)
+
+- 백그라운드로 도는 **ubuntu 파드**를 하나 실행 (sleep로 계속 유지):
+
+```bash
+kubectl run ubuntu --image=ubuntu -- sleep infinity
+```
+
+- `sleep infinity` = 무한정 sleep → 파드를 계속 살려 둠. `get pods`에서 실행 확인.
+- 이제 실행 중인 파드 안에서 **추가 프로세스**를 실행할 수 있다 → `kubectl exec`:
+
+```bash
+kubectl exec -it ubuntu -- bash   # ubuntu 파드 안에서 bash 셸 실행
+```
+
+- 컨테이너 안으로 진입 → 프롬프트 색상·호스트명이 바뀜.
+- `ps -ef` 확인 시:
+  - **PID 1** = 파드 기동 시 시작된 프로세스 = `sleep infinity`.
+  - `kubectl exec`로 스폰된 **bash 셸**이 보이며, 그 bash가 부모 프로세스로 잡힌다.
+- 컨테이너 내부는 표준 Ubuntu처럼 다룰 수 있음:
+
+```bash
+apt update && apt install curl   # 컨테이너 안에서 패키지 설치
+curl <nginx 파드 IP>             # 설치한 curl로 nginx 조회
+```
+
+> 🎯 시험 포인트: `kubectl exec -it <파드> -- <명령>` = **실행 중인 파드 안에서 추가 프로세스 실행**. 파드의 최초 프로세스가 **PID 1**.
+
+### 4-3-9. Pod 정리 (kubectl delete --now)
+
+- 셸에서 `exit` 후 파드들을 삭제:
+
+```bash
+kubectl delete pod/nginx pod/ubuntu --now
+```
+
+- **버전별 차이**:
+  - **구버전** Kubernetes: 지연 없이 즉시 제거하려면 `--grace-period=0` 사용.
+  - **신버전** Kubernetes: `--now` 만으로 충분 (타이핑·기억이 더 쉬움).
+
+> 🎯 포인트: `kubectl delete pod/<이름> --now` = 지연 없이 즉시 삭제. (구버전은 `--grace-period=0`)
+
+> 강의 마무리: 지금까지는 전부 **명령줄로 만든 단일 컨테이너 파드**였다.
+> 다음(Part 2 예고)에는 **YAML 선언(declaration)** 으로 파드를 만드는 방법을 다룬다.
+
+---
+
+### 4-3-10. 명령어 요약표
+
+| 명령어 | 용도 |
+| --- | --- |
+| `kubectl run nginx --image=nginx` | 단일 컨테이너 파드 생성 |
+| `kubectl get pods` | 파드 목록 확인 |
+| `kubectl get pods -o wide` | 파드 IP·노드 등 상세 정보 |
+| `kubectl logs nginx` | 파드 로그 확인 |
+| `kubectl port-forward nginx 8080:80` | 로컬 8080 → 파드 80 터널 |
+| `kubectl run -it --rm curl --image=curlimages/curl --restart=Never -- curl <IP>` | 다른 파드에서 조회(1회성) |
+| `kubectl run ubuntu --image=ubuntu -- sleep infinity` | 백그라운드 유지용 파드 |
+| `kubectl exec -it ubuntu -- bash` | 실행 중 파드에서 셸 실행 |
+| `kubectl delete pod/nginx pod/ubuntu --now` | 파드 즉시 삭제 |
+
+> 🎯 암기 팁: **run(생성) · get -o wide(상세) · logs(로그) · port-forward(터널) · exec(진입) · delete --now(삭제)** 6개 흐름.
+
+## 4-4. Kubernetes Pods - Part 2 (YAML로 파드 만들기)
+
+### 한 줄 요약
+파드는 **YAML 선언**으로도 만들 수 있다. `kubectl run ... --dry-run=client -o yaml`로 **YAML 초안을 빠르게 생성**하고, `kubectl explain`으로 스펙을 조회한다. 적용은 **명령형 `create`**(한 번만 가능)와 **선언형 `apply`**(반복 적용·수정 가능)로 나뉘며, 실무는 대개 **apply**를 쓴다. 하나의 YAML 파일에 **`---` 구분자**로 여러 파드를 담아 `-f`로 한 번에 생성·삭제할 수 있다.
+
+---
+
+### 4-4-1. YAML이란 & kubectl로 YAML 빠르게 생성하기 (--dry-run)
+
+- **YAML** = 설정 파일 정의에 자주 쓰이는 간단한 **데이터 직렬화 언어**.
+- kubectl로 필요한 **YAML 초안을 빠르게 확보**할 수 있다.
+- 앞서 쓴 `kubectl run nginx --image=nginx`를 변형:
+
+```bash
+kubectl run nginx --image=nginx --dry-run=client -o yaml | tee nginx.yaml
+```
+
+- `--dry-run=client` = 실제로 만들지 않고 **결과만 시뮬레이션**.
+- `-o yaml` = 출력을 **YAML 형식**으로.
+- `| tee <파일>` = **T 자 분기**처럼 화면 출력 + 파일 저장을 **동시에** 수행.
+
+> 🎯 포인트: `--dry-run=client -o yaml | tee 파일` = **파드 YAML 초안을 즉석에서 생성·저장**하는 표준 기법.
+
+### 4-4-2. restartPolicy와 kubectl explain
+
+- 생성된 YAML에는 많은 정보가 담기며, 그중 **`restartPolicy`** 에 주목.
+- **`restartPolicy` 기본값 = `Always`** → 파드 실패 시 **항상 재시작 시도**.
+- 유효한 값 3가지: **`Always` · `Never` · `OnFailure`**.
+- 스펙의 특정 항목을 더 알고 싶으면 **`kubectl explain`** 사용:
+
+```bash
+kubectl explain pod.spec.restartPolicy
+```
+
+- `pod` = kind, `.spec.restartPolicy` = 조회할 경로 → 가능한 값과 참고 링크를 보여준다.
+
+> 🎯 시험 포인트: **restartPolicy = Always(기본) / Never / OnFailure.** 스펙 조회는 `kubectl explain <kind>.<경로>`.
+
+---
+
+### 4-4-3. create vs apply (명령형 vs 선언형)
+
+- YAML 파일은 **`kubectl create`** 또는 **`kubectl apply`** 로 실행할 수 있다.
+- **`create` = 명령형(Imperative)**.
+  - `create` · `replace` · `delete` 가 모두 명령형으로 분류됨.
+  - 이미 만든 것을 **다시 create 하면 에러** (한 번만 생성 가능).
+- **`apply` = 선언형(Declarative)**.
+  - "이 개체가 **이런 모습이길 원한다**"고 선언 → 없으면 만들고 있으면 맞춰 갱신.
+  - 앞으로 YAML을 **수정할 계획이면 처음부터 apply로 시작**하는 것이 좋다.
+  - `create`로 만든 리소스에 `apply`하면 **경고(warning)** 가 뜨지만, 이후엔 경고 없이 계속 apply 가능.
+- 실무에서는 **대부분 apply**를 사용. (둘 다 개체가 없을 때는 동작함)
+
+```bash
+kubectl create -f nginx.yaml   # 두 번째 실행 시 이미 존재 → 에러
+kubectl apply  -f nginx.yaml   # create했던 리소스면 첫 apply에 경고, 이후엔 조용히 적용
+```
+
+> 🎯 시험 포인트: **create/replace/delete = 명령형(한 번만)**, **apply = 선언형(원하는 상태 선언, 반복·수정 가능)**. 수정 예정이면 apply로 시작.
+
+### 4-4-4. 하나의 YAML에 여러 선언 담기 (--- 구분자)
+
+- ubuntu 파드도 같은 방식으로 YAML 생성:
+
+```bash
+kubectl run ubuntu --image=ubuntu --dry-run=client -o yaml -- sleep infinity | tee ubuntu.yaml
+kubectl apply -f ubuntu.yaml
+```
+
+- 현재는 nginx.yaml, ubuntu.yaml **두 개의 파일**이지만, **하나의 YAML 파일에 여러 선언**을 담을 수 있다.
+- **`---`** = YAML에서 항목(엔트리) 사이를 나누는 **구분자(separator)**.
+- 두 파일을 하나로 합치기 (중괄호로 명령을 그룹화):
+
+```bash
+{ cat nginx.yaml; echo ---; cat ubuntu.yaml; } | tee combined.yaml
+```
+
+- `{ ... }` = 명령들을 그룹화, 각 명령은 `;`로 구분, 중간의 `echo ---`로 두 선언을 분리.
+
+> 🎯 시험 포인트: **YAML의 `---` = 여러 리소스 선언을 한 파일에 담는 구분자.**
+
+---
+
+### 4-4-5. 파일로 적용·삭제 (-f 옵션)
+
+- 합쳐진 단일 파일을 apply하면 **두 개체가 동시에 생성**된다:
+
+```bash
+kubectl apply -f combined.yaml    # nginx + ubuntu 동시 생성
+```
+
+- 삭제도 파일을 지정(`-f`)해 한 번에:
+
+```bash
+kubectl delete -f combined.yaml --now   # 파일 내 모든 개체 삭제, --now로 즉시
+```
+
+- `-f <파일>` = 해당 파일에 정의된 리소스들을 대상으로 지정. `--now`로 지연 없이 삭제.
+
+> 🎯 포인트: **`-f 파일` = 파일 기반 적용/삭제.** combined 파일로 여러 파드를 **한 번에 생성·삭제**.
+
+---
+
+### 4-4-6. 명령어 요약표
+
+| 명령어 | 용도 |
+| --- | --- |
+| `kubectl run nginx --image=nginx --dry-run=client -o yaml \| tee nginx.yaml` | 파드 YAML 초안 생성·저장 |
+| `kubectl explain pod.spec.restartPolicy` | 스펙 항목 설명 조회 |
+| `kubectl create -f nginx.yaml` | 명령형 생성(한 번만) |
+| `kubectl apply -f nginx.yaml` | 선언형 적용(반복·수정 가능) |
+| `{ cat nginx.yaml; echo ---; cat ubuntu.yaml; } \| tee combined.yaml` | 여러 선언을 한 파일로 결합 |
+| `kubectl apply -f combined.yaml` | 파일 내 모든 개체 동시 생성 |
+| `kubectl delete -f combined.yaml --now` | 파일 내 모든 개체 즉시 삭제 |
+
+> 🎯 암기 팁: **dry-run(초안) → explain(조회) → create/apply(적용) → `---`(결합) → -f(파일 적용/삭제)** 흐름.
+
+---
+
 ## 🎯 시험 대비 핵심 암기 체크
 
 ### 4-1 Container Orchestration
@@ -383,6 +703,30 @@ Kubernetes는 **Control Plane(주요 컴포넌트 실행)** 과 **Node(워크로
 - [ ] **HA = Control Plane 다중화 + etcd 클러스터 + Raft 합의 + API 앞 로드밸런서**
 - [ ] **Static Pod 4형제 = etcd · apiserver · scheduler · controller-manager**
 
+### 4-3 Kubernetes Pods
+- [ ] **Pod = 배포 가능한 최소 컴퓨트 단위 = 1개 이상 컨테이너의 그룹**
+- [ ] 파드는 앱 + 의존성 + **공유 스토리지 + 네트워킹**을 하나의 단위로 캡슐화
+- [ ] 파드 **내부** 컨테이너 통신 = **localhost + IPC**(네트워킹 공유)
+- [ ] 각 파드는 클러스터 내 **고유 IP** 1개 보유
+- [ ] **파드 IP는 클러스터 내부(모든 노드)에서 접근 가능**, 외부 접근은 실행 위치·환경에 따라 다름
+- [ ] **파드 간 통신 = 파드 IP로 직접, NAT 불필요**
+- [ ] `kubectl run <이름> --image=<이미지>` = 단일 컨테이너 파드 생성
+- [ ] `kubectl get pods -o wide` = **IP·노드** 등 상세 정보
+- [ ] `kubectl port-forward <파드> 8080:80` = **로컬 포트 → 파드 포트 터널**
+- [ ] `--rm` = 종료 시 파드 자동 정리, `--restart=Never` = 재시작 안 함, `--` = 파라미터 구분자
+- [ ] `kubectl exec -it <파드> -- bash` = 실행 중 파드에서 추가 프로세스 실행, 최초 프로세스는 **PID 1**
+- [ ] `kubectl delete pod/<이름> --now` = 즉시 삭제 (구버전은 `--grace-period=0`)
+
+### 4-4 Kubernetes Pods (YAML)
+- [ ] **YAML = 데이터 직렬화 언어**, 설정 파일 정의에 자주 사용
+- [ ] `--dry-run=client -o yaml | tee 파일` = **YAML 초안 생성·저장** (dry-run은 실제 생성 안 함)
+- [ ] **restartPolicy = Always(기본) / Never / OnFailure**
+- [ ] 스펙 조회 = `kubectl explain <kind>.<경로>` (예: `pod.spec.restartPolicy`)
+- [ ] **create/replace/delete = 명령형(Imperative)**, 같은 것 두 번 create 시 에러
+- [ ] **apply = 선언형(Declarative)**, 원하는 상태 선언 → 반복·수정 가능 (실무 기본)
+- [ ] **YAML `---` = 한 파일에 여러 리소스 선언을 구분**하는 구분자
+- [ ] **`-f 파일`** = 파일 기반 적용/삭제, `apply -f`/`delete -f`로 여러 개체 동시 처리
+
 ---
 
 ## 🧪 셀프 체크 (정답은 스스로 정정 → 틀리면 오답노트로)
@@ -405,3 +749,22 @@ Kubernetes는 **Control Plane(주요 컴포넌트 실행)** 과 **Node(워크로
 13. CoreDNS는 어떤 워크로드 형태로 실행되는가? Deployment의 특징은?
 14. kube-scheduler가 없으면 파드 생성 시 무슨 일이 벌어지는가?
 15. HA 구성의 핵심 요소들과 Raft 합의의 목적을 설명하시오.
+
+### 4-3
+16. Pod의 정의를 한 문장으로 말하시오. 파드가 캡슐화하는 4가지는?
+17. 같은 파드 안 컨테이너들은 어떻게 통신하는가? (2가지 방식)
+18. 파드 IP는 어디에서 접근 가능한가? 외부 접근 가능 여부는 무엇에 좌우되는가?
+19. 두 파드가 통신할 때 NAT가 필요한가? 그 이유는?
+20. `kubectl port-forward nginx 8080:80` 명령이 하는 일을 설명하시오.
+21. `--rm`, `--restart=Never`, `--`(더블 대시)의 각 의미는?
+22. 실행 중인 파드 안에서 bash 셸을 실행하는 명령은? 파드의 최초 프로세스 PID는?
+23. 파드를 지연 없이 즉시 삭제하는 최신 옵션과 구버전 옵션은 각각 무엇인가?
+
+### 4-4
+24. `--dry-run=client -o yaml`의 역할과, `tee`를 함께 쓰는 이유는?
+25. restartPolicy의 기본값과 유효한 3가지 값은?
+26. 특정 스펙 항목의 설명을 조회하는 명령은? (예: restartPolicy)
+27. create와 apply의 차이를 명령형/선언형 관점에서 설명하시오.
+28. 이미 존재하는 리소스를 다시 create하면 어떻게 되는가? create한 리소스에 apply하면?
+29. YAML에서 여러 선언을 한 파일에 담을 때 쓰는 구분자는 무엇인가?
+30. 하나의 combined.yaml로 여러 파드를 동시에 생성·삭제하는 명령은?
