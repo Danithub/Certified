@@ -36,7 +36,8 @@
 | **KEDA** | 이벤트 기반 오토스케일(scale to zero) |
 | **CloudEvents** | 이벤트 데이터 공통 포맷 |
 | **Jaeger / OpenTelemetry** | 분산 트레이싱/텔레메트리 |
-> 참고: Grafana·Terraform·Ansible은 유명하지만 **CNCF 그래듀에이트 목록과 별개**.
+
+> **참고**: Grafana·Terraform·Ansible은 유명하지만 **CNCF 그래듀에이트 목록과는 별개**입니다.
 
 ## 3. 성숙도 3단계 & 거버넌스
 

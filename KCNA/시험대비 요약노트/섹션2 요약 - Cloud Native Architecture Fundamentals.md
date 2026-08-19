@@ -165,7 +165,8 @@
 | --- | --- | --- |
 | Continuous **Delivery** | 릴리스 준비까지 자동, **릴리스는 사람이 개시** | 사람 |
 | Continuous **Deployment** | prod까지 **전자동** 배포 | 자동 |
-> KCNA에서 CI/CD의 CD는 **Delivery**로 간주.
+
+> KCNA에서 CI/CD의 CD는 **Delivery**로 간주합니다.
 
 ### 오토스케일링 방식
 | 방식 | 트리거 | 특징 |
@@ -185,7 +186,7 @@
 ### 스케일 방향
 | 구분 | 별칭 | 방법 | CN 선호 |
 | --- | --- | --- | --- |
-| Vertical | scale up | 기존 리소스 증설 | 덜 |
+| Vertical | scale up | 기존 리소스 증설 | 덜 선호 |
 | Horizontal | scale out | 인스턴스 추가/제거 | **선호** |
 
 ### CNCF 성숙도
